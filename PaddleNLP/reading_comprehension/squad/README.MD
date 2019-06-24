@@ -6,7 +6,7 @@
 
 给定若干篇章（一个或者多个）以及若干问题，机器需要在理解整个篇章的基础上，给出正确的答案，答案不限类型，可以是一个数字，一个实体名称，也可以是一个段落。
 
-![](https://hanxiao.github.io/2018/04/21/Teach-Machine-to-Comprehend-Text-and-Answer-Question-with-Tensorflow/721ad465.png)
+![](./data/appendix/mrc.png)
 
 本项目包涵了使用PaddlePaddle实现基于[BERT](https://arxiv.org/abs/1810.04805)的SQuAD阅读理解模型，
 包含模型训练，预测，评估，上线部署，以及使用自定义数据等内容。
@@ -17,7 +17,7 @@
   - [准备数据](#准备数据)
   - [单机训练](#单机训练)
   - [效果评估](#效果评估)
-- [**使用自定义数据**]（#自定义数据）
+- [**自定义数据**]（#自定义数据）
 - [**模型原理**]（#模型原理）
 - [**模型部署**: 多硬件环境模型部署支持](#模型部署)
   - [产出用于部署的 inference model](#保存-inference-model)
@@ -56,255 +56,917 @@ pip install pd-palm
 
 ### 准备数据
 
-本项目内预置了
+本项目内预置了SQuAD1.1的训练集和开发集（./data/input/下），用无需下载。如需使用其他数据，请参考[使用自定义数据]（#自定义数据）章节。
 
 ### 单机训练
 
-利用提供的示例训练数据和测试数据，我们来说明如何进行单机训练。关于预训练的启动方式，可以查看脚本 `train.sh` ，该脚本已经默认以示例数据作为输入，以 GPU 模式进行训练。在开始预训练之前，需要把 CUDA、cuDNN、NCCL2 等动态库路径加入到环境变量 `LD_LIBRARY_PATH` 之中，然后按如下方式即可开始单机多卡预训练
+本项目默认支持GPU单机 单卡/多卡，和CPU多核训练。在使用GPU训练时可以使用以下命令：
 
 ```shell
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-./train.sh -local y
-```
+source ~/.bash_profile
 
-这里需要特别说明的是，参数 `generate_neg_sample` 为 `True` 表示在预训练过程中，`Next Sentence Prediction` 任务的负样本是根据训练数据中的正样本动态生成的，我们给出的样例训练数据 [`demo_wiki_train.gz`](data/train/demo_wiki_train.gz) 只包含 `Next Sentence Prediction` 任务的正样本；如果已事先构造了 `Next Sentence Prediction` 任务的正负样本，则需要将 `generate_neg_sample` 置为 `False`。
+# open garbage collection to save memory
+export FLAGS_eager_delete_tensor_gb=0.0
 
-预训练任务进行的过程中会输出当前学习率、训练数据所经过的轮数、当前迭代的总步数、训练误差、训练速度等信息，根据 `--validation_steps ${N}` 的配置，每间隔 `N` 步输出模型在验证集的各种指标:
-
-```
-current learning_rate:0.000002
-epoch: 1, progress: 1/1, step: 60, loss: 10.487363, ppl: 17796.216797, next_sent_acc: 0.560417, speed: 1.060437 steps/s, file: demo_wiki_train.gz
-current learning_rate:0.000002
-epoch: 1, progress: 1/1, step: 80, loss: 10.262355, ppl: 14686.215820, next_sent_acc: 0.625947, speed: 1.065939 steps/s, file: demo_wiki_train.gz
-current learning_rate:0.000003
-epoch: 1, progress: 1/1, step: 100, loss: 10.132796, ppl: 12748.593750, next_sent_acc: 0.509135, speed: 1.070796 steps/s, file: demo_wiki_train.gz
-[validation_set] epoch: 1, step: 100, loss: 10.036789, global ppl: 12706.841797, batch-averged ppl: 12706.841797, next_sent_acc: 1.000000, speed: 0.987255 steps/s
-```
-
-如果用自定义的真实数据进行训练，请参照该脚本对参数做相应的修改。
-
-
-### 分布式训练
-分布式训练可以部署在单机（多进程）或者多机上，我们使用 NCCL 进行节点间的通信。同时需要设置参与训练的所有节点 endpoints 和当前节点 endpoint.
-这里我们提供了一个在本地可以模拟分布式训练的样例: `test_local_dist.sh`，这个脚本已经说明主要的分布式训练的启动逻辑。
-例如, 如果我们需要在两台机器（192.168.0.16, 192.168.0.17）上进行分布式训练，我们可以在节点 0（192.168.0.16）上运行：
-
-```shell
-export worker_endpoints=192.168.0.16:9184,192.168.0.17:9185
-export current_endpoint=192.168.0.16:9184
-./train.sh -local n
-```
-
-节点 1（192.168.0.17）上运行:
-
-```shell
-export worker_endpoints=192.168.0.16:9184,192.168.0.17:9185
-export current_endpoint=192.168.0.17:9185
-./train.sh -local n
-```
-
-## NLP 任务的 Fine-tuning
-
-在完成 BERT 模型的预训练后，即可利用预训练参数在特定的 NLP 任务上做 Fine-tuning。以下利用开源的预训练模型，示例如何进行分类任务和阅读理解任务的 Fine-tuning，如果要运行这些任务，请通过 [发布要点](#发布要点) 一节提供的链接预先下载好对应的预训练模型。
-
-### 语句和句对分类任务
-
-对于 [GLUE 数据](https://gluebenchmark.com/tasks)，请运行这个[脚本](https://gist.github.com/W4ngatang/60c2bdb54d156a41194446737ce03e2e)予以下载; 对于 XNLI 任务，则需分别下载 [XNLI dev/test set](https://bert-data.bj.bcebos.com/XNLI-1.0.zip) 和 [XNLI machine-translated training set](https://bert-data.bj.bcebos.com/XNLI-MT-1.0.zip)，然后解压到同一个目录。以 XNLI 任务为例，启动 Fine-tuning 的方式如下：
-
-```shell
-export FLAGS_enable_parallel_graph=1
-export FLAGS_sync_nccl_allreduce=1
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-
-BERT_BASE_PATH="chinese_L-12_H-768_A-12"
-TASK_NAME='XNLI'
-DATA_PATH=/path/to/xnli/data/
-CKPT_PATH=/path/to/save/checkpoints/
-
-python -u run_classifier.py --task_name ${TASK_NAME} \
-                   --use_cuda true \
-                   --do_train true \
-                   --do_val true \
-                   --do_test true \
-                   --batch_size 8192 \
-                   --in_tokens true \
-                   --init_pretraining_params ${BERT_BASE_PATH}/params \
-                   --data_dir ${DATA_PATH} \
-                   --vocab_path ${BERT_BASE_PATH}/vocab.txt \
-                   --checkpoints ${CKPT_PATH} \
-                   --save_steps 1000 \
-                   --weight_decay  0.01 \
-                   --warmup_proportion 0.0 \
-                   --validation_steps 25 \
-                   --epoch 3 \
-                   --max_seq_len 512 \
-                   --bert_config_path ${BERT_BASE_PATH}/bert_config.json \
-                   --learning_rate 1e-4 \
-                   --skip_steps 10 \
-                   --random_seed 1
-```
-
-这里的 `chinese_L-12_H-768_A-12` 即是转换后的中文预训练模型。需要注意的是，BERT on PaddlePaddle 支持按两种方式构建一个 batch 的数据，`in_tokens` 参数影响 `batch_size` 参数的意义，如果 `in_tokens` 为 `true` 则按照 token 个数构建 batch, 如不设定则按照 example 个数来构建 batch. 训练过程中会输出训练误差、训练速度等信息，训练结束后会输出如下所示的在验证集上的测试结果：
-
-```
-[dev evaluation] ave loss: 0.622958, ave acc: 0.770281, elapsed time: 8.946956 s
-```
-
-### 阅读理解 SQuAD
-
-下载 SQuAD 的数据以及测评脚本到 `$SQUAD_APTH` 目录。
-
-SQuAD v1.1
-
- [train-v1.1.json](https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v1.1.json)
-
- [dev-v1.1.json](https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v1.1.json)
-
- [evaluate-v1.1.py](https://github.com/allenai/bi-att-flow/blob/master/squad/evaluate-v1.1.py)
-
- SQuAD v2.0
-
- [train-v2.0.json](https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v2.0.json)
-
- [dev-v2.0.json](https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json)
-
- [evaluate-v2.0.py](https://worksheets.codalab.org/rest/bundles/0x6b567e1cf2e041ec80d7098f031c5c9e/contents/blob/)
-
- 对于 SQuAD v1.1, 按如下方式启动 Fine-tuning:
-
- ```shell
-export FLAGS_enable_parallel_graph=1
-export FLAGS_sync_nccl_allreduce=1
+# setting visible devices for training
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
-BERT_BASE_PATH="uncased_L-12_H-768_A-12"
-CHECKPOINT_PATH=/path/to/save/checkpoints/
-SQUAD_PATH=/path/to/squad/data/
+# training
+fluid -u main.py \
+  --do_train=True \
+  --epoch=2 \
+  --learning_rate=3e-5 \
+  --weight_decay=0.001 \
+  --use_cuda=True \
+  --init_from_pretrain_model="./data/pretrain_models/bert_large_cased/params/" \
+  --save_model_path="./data/saved_models/" \
+  --save_checkpoint="checkpoints" \
+  --save_param="params" \
+  --training_file="./data/input/train-v1.1.json" \
+  --bert_config_path="./data/pretrain_models/bert_large_cased/bert_config.json" \
+  --vocab_path="./data/pretrain_models/bert_large_cased/vocab.txt" \
+  --max_seq_len=384
+```
 
-python -u run_squad.py --use_cuda true\
-                    --batch_size 12 \
-                    --in_tokens false\
-                    --init_pretraining_params ${BERT_BASE_PATH}/params \
-                    --checkpoints ${CHECKPOINT_PATH} \
-                    --vocab_path ${BERT_BASE_PATH}/vocab.txt \
-                    --do_train true \
-                    --do_predict true \
-                    --save_steps 100 \
-                    --warmup_proportion 0.1 \
-                    --weight_decay  0.01 \
-                    --epoch 2 \
-                    --max_seq_len 384 \
-                    --bert_config_path ${BERT_BASE_PATH}/bert_config.json \
-                    --predict_file ${SQUAD_PATH}/dev-v1.1.json \
-                    --do_lower_case true \
-                    --doc_stride 128 \
-                    --train_file ${SQUAD_PATH}/train-v1.1.json \
-                    --learning_rate 3e-5 \
-                    --lr_scheduler linear_warmup_decay \
-                    --skip_steps 10 \
- ```
+如果需要使用GPU单卡，则只需要改变CUDA_VISIBLE_DEVICES=具体设备即可。如果需要使用CPU多核进行训练则需要使用以下命令：
+```shell
+source ~/.bash_profile
 
-对预测结果进行测评
+# open garbage collection to save memory
+export FLAGS_eager_delete_tensor_gb=0.0
+
+# setting visible devices for training
+export CUDA_VISIBLE_DEVICES=""
+
+# training
+python -u main.py \
+  --do_train=True \
+  --epoch=2 \
+  --learning_rate=3e-5 \
+  --weight_decay=0.001 \
+  --use_cuda=False \
+  --init_from_pretrain_model="./data/pretrain_models/bert_large_cased/params/" \
+  --save_model_path="./data/saved_models/" \
+  --save_checkpoint="checkpoints" \
+  --save_param="params" \
+  --training_file="./data/input/train-v1.1.json" \
+  --bert_config_path="./data/pretrain_models/bert_large_cased/bert_config.json" \
+  --vocab_path="./data/pretrain_models/bert_large_cased/vocab.txt" \
+  --max_seq_len=384
+```
+
+### 效果评估
+
+在完成训练后，可以通过以下命令进行评估：
 
 ```shell
-python ${SQUAD_PATH}/evaluate-v1.1.py ${SQUAD_PATH}/dev-v1.1.json ${CHECKPOINT_PATH}/predictions.json
+source ~/.bash_profile
+
+export CUDA_VISIBLE_DEVICES=0
+
+python -u main.py \
+  --do_predict=True \
+  --use_cuda=True \
+  --init_from_params="./data/saved_models/params/step_final/" \
+  --bert_config_path="./data/pretrain_models/bert_large_cased/bert_config.json" \
+  --vocab_path="./data/pretrain_models/bert_large_cased/vocab.txt" \
+  --output_prediction_file="./data/output/predictions.json" \
+  --output_nbest_file="./data/output/nbest_predictions.json" \
+  --prediciton_dir="./data/output/" \
+  --predict_file="./data/input/dev-v1.1.json" \
+  --max_seq_len=384
 ```
-
-会得到类似如下的输出
-
-```text
-{"f1": 88.41249612335034, "exact_match": 81.2488174077578}
-```
-
- 对于 SQuAD v2.0, 按如下方式启动 Fine-tuning:
+在这个命令里，我们使用init_from_params指定需要用哪个训练好的模型进行评估，并通过output_prediction_file和output_nbest_file指定保存文件的目录，在完成评估后，在./data/output/下回分别产生2个文件，对应1-best prediciton和 n-best prediction。根据这两个预测结果，我们就可以评估模型效果了：
 
 ```shell
-export CUDA_VISIBLE_DEVICES=0,1,2,3
-BERT_BASE_PATH="uncased_L-12_H-768_A-12"
-CHECKPOINT_PATH=/path/to/save/checkpoints/
-SQUAD_PATH=/path/tp/squad/data/
+export CUDA_VISIBLE_DEVICES=""
 
-python -u run_squad.py --use_cuda true \
-                    --batch_size 12 \
-                    --in_tokens false\
-                    --init_pretraining_params ${BERT_BASE_PATH}/params \
-                    --checkpoints ${CHECKPOINT_PATH} \
-                    --vocab_path ${BERT_BASE_PATH}/vocab.txt \
-                    --do_train true \
-                    --do_predict true \
-                    --save_steps 100 \
-                    --warmup_proportion 0.1 \
-                    --weight_decay  0.01 \
-                    --epoch 2 \
-                    --max_seq_len 384 \
-                    --bert_config_path ${BERT_BASE_PATH}/bert_config.json \
-                    --predict_file ${SQUAD_PATH}/dev-v2.0.json \
-                    --do_lower_case true \
-                    --doc_stride 128 \
-                    --train_file ${SQUAD_PATH}/train-v2.0.json \
-                    --learning_rate 3e-5 \
-                    --skip_steps 10 \
-                    --lr_scheduler linear_warmup_decay \
-                    --version_2_with_negative true
+python -u main.py \
+  --do_eval=True \
+  --evaluation_file="./data/input/dev-v1.1.json" \
+  --output_prediction_file="./data/output/predictions.json"
+
 ```
 
-训练结束后会在 `${CHECKPOINT_PATH}` 文件夹生成最终预测结果 `prediction.json` ，以及至多 `n_best_size` 个最有可能预测结果 `nbest_predictions`，以及每个问题的最优的非空答案和空答案（亦即 “”）之间的得分差 `null_odds.json`。这个文件可以用来调节一个阈值。当空答案的得分与得分最高的空答案的得分之差大于阈值，则选择空答案。运行以下的脚本可以得到令 `F1` 最大的阈值。
+## 自定义数据 
 
-```shell
-python ${SQUAD_PATH}/evaluate-v2.0.py ${SQUAD_PATH}/dev-v2.0.json ${CHECKPOINT_PATH}/predictions.json --na-prob-file ${CHECKPOINT_PATH}/null_odds.json
-```
+在使用过程中，如果需要使用自定义数据，可以参照./data/input/train-v1.1.json和./data/input/dev-v1.1.json的格式重组自定义数据，这两个文件的格式样例如下：
 
-会得到类似的输出
+```json
 
-```text
 {
-  "exact": 71.33833066621747,
-  "f1": 74.6240213073386,
-  "total": 11873,
-  "HasAns_exact": 71.00202429149797,
-  "HasAns_f1": 77.58282810088231,
-  "HasAns_total": 5928,
-  "NoAns_exact": 71.67367535744323,
-  "NoAns_f1": 71.67367535744323,
-  "NoAns_total": 5945,
-  "best_exact": 72.23953507959236,
-  "best_exact_thresh": -1.5834908485412598,
-  "best_f1": 75.12664062186217,
-  "best_f1_thresh": -1.410658597946167
+  u'paragraphs': [
+    {
+      u'qas': [
+        {
+          u'question': u'Which NFL team represented the AFC at Super Bowl 50?',
+          u'id': u'56be4db0acb8001400a502ec',
+          u'answers': [
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            }
+          ]
+        },
+        {
+          u'question': u'Which NFL team represented the NFC at Super Bowl 50?',
+          u'id': u'56be4db0acb8001400a502ed',
+          u'answers': [
+            {
+              u'text': u'Carolina Panthers',
+              u'answer_start': 249
+            },
+            {
+              u'text': u'Carolina Panthers',
+              u'answer_start': 249
+            },
+            {
+              u'text': u'Carolina Panthers',
+              u'answer_start': 249
+            }
+          ]
+        },
+        {
+          u'question': u'Where did Super Bowl 50 take place?',
+          u'id': u'56be4db0acb8001400a502ee',
+          u'answers': [
+            {
+              u'text': u'Santa Clara, California',
+              u'answer_start': 403
+            },
+            {
+              u'text': u"Levi's Stadium",
+              u'answer_start': 355
+            },
+            {
+              u'text': u"Levi's Stadium in the San Francisco Bay Area at Santa Clara, California.",
+              u'answer_start': 355
+            }
+          ]
+        },
+        {
+          u'question': u'Which NFL team won Super Bowl 50?',
+          u'id': u'56be4db0acb8001400a502ef',
+          u'answers': [
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            }
+          ]
+        },
+        {
+          u'question': u'What color was used to emphasize the 50th anniversary of the Super Bowl?',
+          u'id': u'56be4db0acb8001400a502f0',
+          u'answers': [
+            {
+              u'text': u'gold',
+              u'answer_start': 488
+            },
+            {
+              u'text': u'gold',
+              u'answer_start': 488
+            },
+            {
+              u'text': u'gold',
+              u'answer_start': 521
+            }
+          ]
+        },
+        {
+          u'question': u'What was the theme of Super Bowl 50?',
+          u'id': u'56be8e613aeaaa14008c90d1',
+          u'answers': [
+            {
+              u'text': u'"golden anniversary"',
+              u'answer_start': 487
+            },
+            {
+              u'text': u'gold-themed',
+              u'answer_start': 521
+            },
+            {
+              u'text': u'"golden anniversary',
+              u'answer_start': 487
+            }
+          ]
+        },
+        {
+          u'question': u'What day was the game played on?',
+          u'id': u'56be8e613aeaaa14008c90d2',
+          u'answers': [
+            {
+              u'text': u'February 7, 2016',
+              u'answer_start': 334
+            },
+            {
+              u'text': u'February 7',
+              u'answer_start': 334
+            },
+            {
+              u'text': u'February 7, 2016',
+              u'answer_start': 334
+            }
+          ]
+        },
+        {
+          u'question': u'What is the AFC short for?',
+          u'id': u'56be8e613aeaaa14008c90d3',
+          u'answers': [
+            {
+              u'text': u'American Football Conference',
+              u'answer_start': 133
+            },
+            {
+              u'text': u'American Football Conference',
+              u'answer_start': 133
+            },
+            {
+              u'text': u'American Football Conference',
+              u'answer_start': 133
+            }
+          ]
+        },
+        {
+          u'question': u'What was the theme of Super Bowl 50?',
+          u'id': u'56bea9923aeaaa14008c91b9',
+          u'answers': [
+            {
+              u'text': u'"golden anniversary"',
+              u'answer_start': 487
+            },
+            {
+              u'text': u'gold-themed',
+              u'answer_start': 521
+            },
+            {
+              u'text': u'gold',
+              u'answer_start': 521
+            }
+          ]
+        },
+        {
+          u'question': u'What does AFC stand for?',
+          u'id': u'56bea9923aeaaa14008c91ba',
+          u'answers': [
+            {
+              u'text': u'American Football Conference',
+              u'answer_start': 133
+            },
+            {
+              u'text': u'American Football Conference',
+              u'answer_start': 133
+            },
+            {
+              u'text': u'American Football Conference',
+              u'answer_start': 133
+            }
+          ]
+        },
+        {
+          u'question': u'What day was the Super Bowl played on?',
+          u'id': u'56bea9923aeaaa14008c91bb',
+          u'answers': [
+            {
+              u'text': u'February 7, 2016',
+              u'answer_start': 334
+            },
+            {
+              u'text': u'February 7',
+              u'answer_start': 334
+            },
+            {
+              u'text': u'February 7, 2016',
+              u'answer_start': 334
+            }
+          ]
+        },
+        {
+          u'question': u'Who won Super Bowl 50?',
+          u'id': u'56beace93aeaaa14008c91df',
+          u'answers': [
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            }
+          ]
+        },
+        {
+          u'question': u'What venue did Super Bowl 50 take place in?',
+          u'id': u'56beace93aeaaa14008c91e0',
+          u'answers': [
+            {
+              u'text': u"Levi's Stadium",
+              u'answer_start': 355
+            },
+            {
+              u'text': u"Levi's Stadium",
+              u'answer_start': 355
+            },
+            {
+              u'text': u"Levi's Stadium in the San Francisco Bay Area at Santa Clara",
+              u'answer_start': 355
+            }
+          ]
+        },
+        {
+          u'question': u'What city did Super Bowl 50 take place in?',
+          u'id': u'56beace93aeaaa14008c91e1',
+          u'answers': [
+            {
+              u'text': u'Santa Clara',
+              u'answer_start': 403
+            },
+            {
+              u'text': u'Santa Clara',
+              u'answer_start': 403
+            },
+            {
+              u'text': u'Santa Clara',
+              u'answer_start': 403
+            }
+          ]
+        },
+        {
+          u'question': u'If Roman numerals were used, what would Super Bowl 50 have been called?',
+          u'id': u'56beace93aeaaa14008c91e2',
+          u'answers': [
+            {
+              u'text': u'Super Bowl L',
+              u'answer_start': 693
+            },
+            {
+              u'text': u'L',
+              u'answer_start': 704
+            },
+            {
+              u'text': u'Super Bowl L',
+              u'answer_start': 693
+            }
+          ]
+        },
+        {
+          u'question': u'Super Bowl 50 decided the NFL champion for what season?',
+          u'id': u'56beace93aeaaa14008c91e3',
+          u'answers': [
+            {
+              u'text': u'2015',
+              u'answer_start': 116
+            },
+            {
+              u'text': u'the 2015 season',
+              u'answer_start': 112
+            },
+            {
+              u'text': u'2015',
+              u'answer_start': 116
+            }
+          ]
+        },
+        {
+          u'question': u'What year did the Denver Broncos secure a Super Bowl title for the third time?',
+          u'id': u'56bf10f43aeaaa14008c94fd',
+          u'answers': [
+            {
+              u'text': u'2015',
+              u'answer_start': 116
+            },
+            {
+              u'text': u'2016',
+              u'answer_start': 346
+            },
+            {
+              u'text': u'2015',
+              u'answer_start': 116
+            }
+          ]
+        },
+        {
+          u'question': u'What city did Super Bowl 50 take place in?',
+          u'id': u'56bf10f43aeaaa14008c94fe',
+          u'answers': [
+            {
+              u'text': u'Santa Clara',
+              u'answer_start': 403
+            },
+            {
+              u'text': u'Santa Clara',
+              u'answer_start': 403
+            },
+            {
+              u'text': u'Santa Clara',
+              u'answer_start': 403
+            }
+          ]
+        },
+        {
+          u'question': u'What stadium did Super Bowl 50 take place in?',
+          u'id': u'56bf10f43aeaaa14008c94ff',
+          u'answers': [
+            {
+              u'text': u"Levi's Stadium",
+              u'answer_start': 355
+            },
+            {
+              u'text': u"Levi's Stadium",
+              u'answer_start': 355
+            },
+            {
+              u'text': u"Levi's Stadium",
+              u'answer_start': 355
+            }
+          ]
+        },
+        {
+          u'question': u'What was the final score of Super Bowl 50? ',
+          u'id': u'56bf10f43aeaaa14008c9500',
+          u'answers': [
+            {
+              u'text': u'24\u201310',
+              u'answer_start': 267
+            },
+            {
+              u'text': u'24\u201310',
+              u'answer_start': 267
+            },
+            {
+              u'text': u'24\u201310',
+              u'answer_start': 267
+            }
+          ]
+        },
+        {
+          u'question': u'What month, day and year did Super Bowl 50 take place? ',
+          u'id': u'56bf10f43aeaaa14008c9501',
+          u'answers': [
+            {
+              u'text': u'February 7, 2016',
+              u'answer_start': 334
+            },
+            {
+              u'text': u'February 7, 2016',
+              u'answer_start': 334
+            },
+            {
+              u'text': u'February 7, 2016',
+              u'answer_start': 334
+            }
+          ]
+        },
+        {
+          u'question': u'What year was Super Bowl 50?',
+          u'id': u'56d20362e7d4791d009025e8',
+          u'answers': [
+            {
+              u'text': u'2015',
+              u'answer_start': 116
+            },
+            {
+              u'text': u'2016',
+              u'answer_start': 346
+            },
+            {
+              u'text': u'2016',
+              u'answer_start': 346
+            }
+          ]
+        },
+        {
+          u'question': u'What team was the AFC champion?',
+          u'id': u'56d20362e7d4791d009025e9',
+          u'answers': [
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            }
+          ]
+        },
+        {
+          u'question': u'What team was the NFC champion?',
+          u'id': u'56d20362e7d4791d009025ea',
+          u'answers': [
+            {
+              u'text': u'Carolina Panthers',
+              u'answer_start': 249
+            },
+            {
+              u'text': u'Carolina Panthers',
+              u'answer_start': 249
+            },
+            {
+              u'text': u'Carolina Panthers',
+              u'answer_start': 249
+            }
+          ]
+        },
+        {
+          u'question': u'Who won Super Bowl 50?',
+          u'id': u'56d20362e7d4791d009025eb',
+          u'answers': [
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            }
+          ]
+        },
+        {
+          u'question': u'Super Bowl 50 determined the NFL champion for what season?',
+          u'id': u'56d600e31c85041400946eae',
+          u'answers': [
+            {
+              u'text': u'2015',
+              u'answer_start': 116
+            },
+            {
+              u'text': u'the 2015 season',
+              u'answer_start': 112
+            },
+            {
+              u'text': u'2015',
+              u'answer_start': 116
+            }
+          ]
+        },
+        {
+          u'question': u'Which team won Super Bowl 50.',
+          u'id': u'56d600e31c85041400946eb0',
+          u'answers': [
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            }
+          ]
+        },
+        {
+          u'question': u'Where was Super Bowl 50 held?',
+          u'id': u'56d600e31c85041400946eb1',
+          u'answers': [
+            {
+              u'text': u'Santa Clara, California.',
+              u'answer_start': 403
+            },
+            {
+              u'text': u"Levi's Stadium",
+              u'answer_start': 355
+            },
+            {
+              u'text': u"Levi's Stadium",
+              u'answer_start': 355
+            }
+          ]
+        },
+        {
+          u'question': u'The name of the NFL championship game is?',
+          u'id': u'56d9895ddc89441400fdb50e',
+          u'answers': [
+            {
+              u'text': u'Super Bowl',
+              u'answer_start': 0
+            },
+            {
+              u'text': u'Super Bowl',
+              u'answer_start': 0
+            },
+            {
+              u'text': u'Super Bowl',
+              u'answer_start': 0
+            }
+          ]
+        },
+        {
+          u'question': u'What 2015 NFL team one the AFC playoff?',
+          u'id': u'56d9895ddc89441400fdb510',
+          u'answers': [
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            },
+            {
+              u'text': u'Denver Broncos',
+              u'answer_start': 177
+            }
+          ]
+        }
+      ],
+      u'context': u'Super Bowl 50 was an American football game to determine the champion of the National Football League (NFL) for the 2015 season. The American Football Conference (AFC) champion Denver Broncos defeated the National Football Conference (NFC) champion Carolina Panthers 24\u201310 to earn their third Super Bowl title. The game was played on February 7, 2016, at Levi\'s Stadium in the San Francisco Bay Area at Santa Clara, California. As this was the 50th Super Bowl, the league emphasized the "golden anniversary" with various gold-themed initiatives, as well as temporarily suspending the tradition of naming each Super Bowl game with Roman numerals (under which the game would have been known as "Super Bowl L"), so that the logo could prominently feature the Arabic numerals 50.'
+    },
+    
+    ...
+    
+    {
+      u'qas': [
+        {
+          u'question': u'How many total yards did Denver gain?',
+          u'id': u'56becb823aeaaa14008c948b',
+          u'answers': [
+            {
+              u'text': u'194',
+              u'answer_start': 136
+            },
+            {
+              u'text': u'194',
+              u'answer_start': 136
+            },
+            {
+              u'text': u'194',
+              u'answer_start': 136
+            }
+          ]
+        },
+        {
+          u'question': u'How many first downs did Denver have?',
+          u'id': u'56becb823aeaaa14008c948c',
+          u'answers': [
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            },
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            },
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            }
+          ]
+        },
+        {
+          u'question': u'What team had 244 yards in Super Bowl XXXV?',
+          u'id': u'56becb823aeaaa14008c948d',
+          u'answers': [
+            {
+              u'text': u'Baltimore Ravens',
+              u'answer_start': 308
+            },
+            {
+              u'text': u'the Baltimore Ravens',
+              u'answer_start': 304
+            },
+            {
+              u'text': u'Ravens',
+              u'answer_start': 318
+            }
+          ]
+        },
+        {
+          u'question': u'Who returned a punt for 61 yards, setting a new Super Bowl record?',
+          u'id': u'56becb823aeaaa14008c948e',
+          u'answers': [
+            {
+              u'text': u'Jordan Norwood',
+              u'answer_start': 593
+            },
+            {
+              u'text': u'Jordan Norwood',
+              u'answer_start': 593
+            },
+            {
+              u'text': u'Norwood',
+              u'answer_start': 600
+            }
+          ]
+        },
+        {
+          u'question': u'Who is the only quarterback to win a Super Bowl with two teams?',
+          u'id': u'56becb823aeaaa14008c948f',
+          u'answers': [
+            {
+              u'text': u'Manning',
+              u'answer_start': 897
+            },
+            {
+              u'text': u'Manning',
+              u'answer_start': 1069
+            },
+            {
+              u'text': u'Manning',
+              u'answer_start': 1069
+            }
+          ]
+        },
+        {
+          u'question': u'How many yards did Denver have for Super Bowl 50?',
+          u'id': u'56d7277c0d65d214001983fe',
+          u'answers': [
+            {
+              u'text': u'194',
+              u'answer_start': 136
+            },
+            {
+              u'text': u'194',
+              u'answer_start': 136
+            },
+            {
+              u'text': u'194',
+              u'answer_start': 136
+            }
+          ]
+        },
+        {
+          u'question': u'How many first downs did Denver have for Super Bowl 50?',
+          u'id': u'56d7277c0d65d214001983ff',
+          u'answers': [
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            },
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            },
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            }
+          ]
+        },
+        {
+          u'question': u'Who did the Broncos tie with the most sacks in a Super Bowl?',
+          u'id': u'56d7277c0d65d21400198401',
+          u'answers': [
+            {
+              u'text': u'Chicago Bears',
+              u'answer_start': 508
+            },
+            {
+              u'text': u'the Chicago Bears',
+              u'answer_start': 504
+            },
+            {
+              u'text': u'Bears',
+              u'answer_start': 516
+            }
+          ]
+        },
+        {
+          u'question': u'Which team did Gary Kubiak play for when he was in the Super Bowl?',
+          u'id': u'56d7277c0d65d21400198402',
+          u'answers': [
+            {
+              u'text': u'Broncos',
+              u'answer_start': 451
+            },
+            {
+              u'text': u'Denver',
+              u'answer_start': 726
+            },
+            {
+              u'text': u'Denver',
+              u'answer_start': 68
+            }
+          ]
+        },
+        {
+          u'question': u'How many first downs did the Panthers have in Super Bowl 50?',
+          u'id': u'56d9cd9adc89441400fdb84c',
+          u'answers': [
+            {
+              u'text': u'21',
+              u'answer_start': 158
+            },
+            {
+              u'text': u'21',
+              u'answer_start': 158
+            },
+            {
+              u'text': u'21',
+              u'answer_start': 158
+            }
+          ]
+        },
+        {
+          u'question': u'How many first downs did the Broncos have in Super Bowl 50?',
+          u'id': u'56d9cd9adc89441400fdb84d',
+          u'answers': [
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            },
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            },
+            {
+              u'text': u'11',
+              u'answer_start': 164
+            }
+          ]
+        },
+        {
+          u'question': u'What team had the lowest downs and yards ever in the Super Bowl as of Super Bowl 50?',
+          u'id': u'56d9cd9adc89441400fdb84e',
+          u'answers': [
+            {
+              u'text': u'The Broncos',
+              u'answer_start': 447
+            },
+            {
+              u'text': u'Denver',
+              u'answer_start': 68
+            },
+            {
+              u'text': u'Denver',
+              u'answer_start': 68
+            }
+          ]
+        },
+        {
+          u'question': u'What team di the Broncos tie a Super Bowl record for in sacks?',
+          u'id': u'56d9cd9adc89441400fdb84f',
+          u'answers': [
+            {
+              u'text': u'Chicago Bears',
+              u'answer_start': 508
+            },
+            {
+              u'text': u'the Chicago Bears',
+              u'answer_start': 504
+            },
+            {
+              u'text': u'Bears',
+              u'answer_start': 516
+            }
+          ]
+        },
+        {
+          u'question': u'How many teams has Manning won the Super Bowl with?',
+          u'id': u'56d9cd9adc89441400fdb850',
+          u'answers': [
+            {
+              u'text': u'two',
+              u'answer_start': 814
+            },
+            {
+              u'text': u'two',
+              u'answer_start': 1199
+            },
+            {
+              u'text': u'two',
+              u'answer_start': 1199
+            }
+          ]
+        }
+      ],
+      u'context': u"Super Bowl 50 featured numerous records from individuals and teams. Denver won despite being massively outgained in total yards (315 to 194) and first downs (21 to 11). Their 194 yards and 11 first downs were both the lowest totals ever by a Super Bowl winning team. The previous record was 244 yards by the Baltimore Ravens in Super Bowl XXXV. Only seven other teams had ever gained less than 200 yards in a Super Bowl, and all of them had lost. The Broncos' seven sacks tied a Super Bowl record set by the Chicago Bears in Super Bowl XX. Kony Ealy tied a Super Bowl record with three sacks. Jordan Norwood's 61-yard punt return set a new record, surpassing the old record of 45 yards set by John Taylor in Super Bowl XXIII. Denver was just 1-of-14 on third down, while Carolina was barely better at 3-of-15. The two teams' combined third down conversion percentage of 13.8 was a Super Bowl low. Manning and Newton had quarterback passer ratings of 56.6 and 55.4, respectively, and their added total of 112 is a record lowest aggregate passer rating for a Super Bowl. Manning became the oldest quarterback ever to win a Super Bowl at age 39, and the first quarterback ever to win a Super Bowl with two different teams, while Gary Kubiak became the first head coach to win a Super Bowl with the same franchise he went to the Super Bowl with as a player."
+    }
+  ],
+  u'title': u'Super_Bowl_50'
 }
-```
-
-其中会输出 `best_f1_thresh` 是最佳阈值，可以使用这个阈值重新训练，或者从 `nbest_predictions.json` 中重新抽取最终 `prediction`。
-训练方法与前面大体相同，只需要设定 `--null_score_diff_threshold` 参数的值为测评时输出的 `best_f1_thresh` ，通常这个值在 -1.0 到 -5.0 之间。
-
-## 混合精度训练
-
-预训练过程和 Fine-tuning 均支持 FP16/FP32 混合精度训练。要使能混合精度训练，只需在前面所述的这些训练启动命令中加入参数
 
 ```
---use_fp16=true \
-```
-
-为了减少混合精度训练的精度损失，通常在训练过程中计算误差的反向传播时，会将损失函数乘上一个大于 1.0 的因子，这里可以通过如下方式设置这个因子
-
-```
---loss_scaling=8.0 \
-```
-
-实验表明，在 BERT 相关的任务中 `loss_scaling` 的取值范围在 8.0 ~ 128.0 之间时模型训练精度没有显著的损失，在 V100 GPU 上混合精度训练相对于 FP32 训练有 1.7 左右的加速比。
-
-更多的细节，可参见[参考论文](https://arxiv.org/abs/1710.03740)。
-
-## 模型转换
-
-除了开放完成转换的 BERT 开源模型，我们还提供了脚本，支持将 BERT TensorFlow 实现所训练的任意预训练模型一键转换为 Paddle Fluid 模型参数。以中文模型的转换为例，只需指定 TensorFlow 模型 checkpoint 的路径和 Paddle Fluid 参数的保存位置，执行
-
-```shell
-python convert_params.py \
-    --init_tf_checkpoint chinese_L-12_H-768_A-12/bert_model.ckpt \
-    --fluid_params_dir params
-```
-即可完成模型转换。
+其中，paragraphs中存储了多个context-question-answer的数据对儿，每个context表示了一段话，question是针对这段话的提问，answer存储了具体的答案，以及答案的位置信息。您可以根据上述格式对自己的数据进行组织。
 
 
 ## 模型部署
