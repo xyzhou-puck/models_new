@@ -75,7 +75,7 @@ export FLAGS_eager_delete_tensor_gb=0.0
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # training
-fluid -u main.py \
+python -u main.py \
   --do_train=True \
   --epoch=2 \
   --learning_rate=3e-5 \
