@@ -1,5 +1,8 @@
 # SQuAD: The Stanford Question Answering Dataset 斯坦福阅读理解竞赛
 
+[![Documentation Status](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat)](https://github.com/PaddlePaddle/models)
+[![License](https://img.shields.io/badge/license-Apache%202-blue.svg)](LICENSE)
+
 ### 模型简介
 
 阅读理解(Machine Reading Comprehension)被誉为人工智能皇冠上的明珠，是自然语言处理领域最具有挑战的任务之一。如下图所示，阅读理解任务可以被定义为：
@@ -967,6 +970,10 @@ python -u main.py \
 
 ```
 其中，paragraphs中存储了多个context-question-answer的数据对儿，每个context表示了一段话，question是针对这段话的提问，answer存储了具体的答案，以及答案的位置信息。您可以根据上述格式对自己的数据进行组织。
+
+## 模型原理
+
+本项目使用BERT完成阅读理解任务，您可以参考文章：https://arxiv.org/abs/1810.04805，了解详细内容。
 
 
 ## 模型部署
