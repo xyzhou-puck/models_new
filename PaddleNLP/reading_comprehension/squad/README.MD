@@ -973,7 +973,8 @@ python -u main.py \
 
 ## 模型原理
 
-本项目使用BERT完成阅读理解任务，您可以参考文章：https://arxiv.org/abs/1810.04805，了解详细内容。
+本项目使用BERT完成阅读理解任务，您可以参考文章：[BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding
+](https://arxiv.org/abs/1810.04805)，了解详细内容。
 
 
 ## 模型部署
