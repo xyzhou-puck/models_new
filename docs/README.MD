@@ -53,14 +53,17 @@
 
 遵照1.5 Paddle-models结构，将整体模型库拆分为3级目录结构，如下图所示：
 
-#### 一级目录，按照大方向进行细分：
+#### 一级目录，按照大方向进行细分，如PaddleNLP，PaddleCV等：
 
 ![avatar](./appendix/dir-1.png)
 
-#### 二级目录，按照具体场景进行拆分：
+#### 二级目录，按照具体场景进行拆分，如在PaddleNLP下，有neural_machine_translation，reading_comprehension等：
 
+![avatar](./appendix/dir-2.png)
 
-#### 三级目录，按照具体任务进行拆分：
+#### 三级目录，按照具体任务进行拆分，如在reading_comprehension下，有squad任务，mrqa任务等：
+
+![avatar](./appendix/dir-3.png)
 
 
 ## 建议规范
