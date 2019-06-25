@@ -12,6 +12,8 @@
   
   - [**功能实现**](#功能实现)
   
+  - [**书写示例**](#书写示例)
+  
   - [**命名规范**](#命名规范)
   
   - [**README**](#README)
@@ -64,6 +66,139 @@
 #### 三级目录，按照具体任务进行拆分，如在reading_comprehension下，有squad任务，mrqa任务等：
 
 ![avatar](./appendix/dir-3.png)
+
+#### 叶子目录，具体到某个具体的任务，如SQuAD，则建议包涵以下内容：
+
+![avatar](./appendix/dir-4.png)
+
+- **data**：存储所有跟数据相关的内容，如configure，dict，input，output，saved_models，inferenece_models等。
+- **squad**：该文件夹命名可以根据具体任务进行命名，保存该任务下一些特定的代码，如reader.py，batching.py，tokenizer.py等。
+- **README.MD**: 当前任务库的使用手册，规范参见[**使用手册规范**](#README)
+- **XXX_net.py**: 保存网络定义的脚本，可以有多个XXX_net.py，不同net之间在网络声明阶段需要统一output，也需要尽量统一input。
+- **eval.py**：执行评估的脚本。
+- **inference_model.py**：执行保存inference_model的脚本，用于准备上线部署环境。
+- **main.py**：主程序入口，通过命令行或者configure文件，执行不同逻辑。
+- **predict.py**：执行预测功能的脚本，需要可以单独运行。
+- **train.py**：执行训练功能的脚本，需要可以单独运行。
+- **run.sh**：示例脚本，需要给出不同环境下（GPU单卡多卡，CPU多核），如何进行训练，预测，评估，保存部署环境等功能。
+
+### 功能实现
+
+原则上需要官方提供的模型需要提供：
+1. **训练**：可以在GPU单卡/多卡，CPU多核的环境下执行训练，至少有一个环境可以打平竞品效果或者复现原有paper效果（如果存在竞品），官方可以给出一种推荐训练的方式。
+2. **预测**：可以在GPU单卡和CPU单核下执行预测。
+3. **评估**：要求同预测。
+4. **保存部署环境**：可以保存可以部署环境，支持模型部署。
+5. **使用自定义数据**：要求官方模型可以灵活支持/适配用户自定义数据，可以通过在readme中加入数据格式描部分和**如何使用自定义数据**章节解决。
+
+### 书写示例
+
+下面以SQUAD下面的ERNIE-based MRC模型具体说明一些代码书写方面的问题。
+
+#### net.py书写示例
+```python
+
+def create_net(
+  is_training, 
+  model_input, 
+  args):
+  
+    """
+    create the network of BERT-based Machine Reading Comprehension Network.
+    is_training: a boolean value, indicating if the model to be created is for training or predicting.
+    model_input: stores the input of the model
+      for simple task like mnist: model_input can be either a single/tuple/list of fluid.layers.data.
+      for complicated task like ERNIE-based machine reading comprehension, the model_input is an object like:
+      
+      class model_input:
+        def __inint__(self):
+          self.image = fluid.layers.data(shape = [-1, 8, 8, 1], dtype = "int64", name = "image")
+      
+      you can define your own one in the code or you can use PALM for easy input data management.
+      
+    """
+
+    # declare the model input here
+    if is_training:
+        src_ids = model_input.src_ids
+        ...
+        is_null_answer = model_input.is_null_answer
+    else:
+        src_ids = model_input.src_ids
+        ...
+        unique_id = model_input.unique_id
+
+    # define the model bert first
+
+    assert isinstance(args.bert_config_path, str)
+
+    # define the model here
+    bert_conf = JsonConfig(args.bert_config_path)
+    base_model = BertModel(
+        src_ids=src_ids,
+        position_ids=pos_ids,
+        sentence_ids=sent_ids,
+        input_mask=input_mask,
+        config=bert_conf)
+
+    sequence_output = base_model.get_sequence_output()
+
+    ...
+
+    # if is_training, then return the loss, otherwise return the prediction
+
+    if is_training:
+
+        def compute_loss(logits, positions):
+            loss = fluid.layers.softmax_with_cross_entropy(
+                logits=logits, label=positions)
+            loss = fluid.layers.mean(x=loss)
+            return loss
+
+        start_loss = compute_loss(start_logits, start_positions)
+        end_logits = fluid.layers.reshape(
+            x=end_logits,
+            shape=[-1, args.start_top_k, list(end_logits.shape)[-1]])
+        end_logits = fluid.layers.slice(
+            end_logits, axes=[1], starts=[0], ends=[1])
+        end_logits = fluid.layers.reshape(
+            x=end_logits, shape=[-1, list(end_logits.shape)[-1]])
+        end_loss = compute_loss(end_logits, end_positions)
+
+        total_loss = (start_loss + end_loss) / 2.0
+
+        if args.use_fp16 and args.loss_scaling > 1.0:
+            total_loss = total_loss * args.loss_scaling
+
+        return total_loss
+
+    else:
+
+        predict = [unique_id, top_k_start_log_probs, top_k_start_indexes, \
+            top_k_end_log_probs, top_k_end_indexes]
+
+        return predict
+
+```
+
+#### train.py书写示例
+
+#### predict.py书写示例
+
+#### eval.py书写示例
+
+#### main.py书写示例
+
+### 命名规范
+1. 文件和文件夹命名
+
+### README
+
+
+### 多环境支持
+
+
+### 注释和Licenses
 
 
 ## 建议规范
