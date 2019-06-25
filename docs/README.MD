@@ -24,9 +24,10 @@
 
 - [**建议规范**](#建议规范)
 
+  - [**显存优化**](#显存优化)
+  
   - [**工具包PALM**](#工具包PALM)
   
-  - [**显存优化**](#显存优化)
   
 - [**合入规则**](#合入规则)
   
@@ -566,7 +567,11 @@ if __name__ == "__main__":
 - 模型IO部分，区分以下场景：
   - checkpoint，用于恢复训练，使用API save/load_persistable，save和load的时候需要手动指定文件后缀".pdckpt"
   - 参数文件，用于进行预测或者保存预训练模型，使用API save/load_params，save的时候需要手动指定文件后缀".pdparams"，对load不做要求（为了适配过去的预训练模型）
-  - inference_model，用户
+  - inference_model，用于保存部署模型，使用API save/load_inference_model，需要手动指定文件后缀为".pdparams"和".pdmodel"。
+
+- 显存优化，统一废弃 fluid.memory_optimize，统一改为开启GC，参见[**显存优化**](#显存优化)
+
+- 随机种子，需要尽量固定program，numpy等含有随机因素模块的随机种子，保证模型可以正常复现。
 
 
 ### 命名规范和使用规范
@@ -620,5 +625,50 @@ README文件需至少包含的内容如图所示，可以根据场景进行扩�
 需要加入注释介绍功能，帮助用户快速熟悉代码结构。
 
 ## 建议规范
+
+以下为建议规则，不强制要求，但是建议模型库使用。
+
+### 显存优化
+
+对于过去使用或者需要使用显存优化功能的模型，建议使用GC开启显存优化，开启GC的最佳方法为：
+
+```shell
+
+设置环境变量：FLAGS_eager_delete_tensor_gb=0.0
+
+设置build_strategy.enable_inplace = True
+
+对需要fetch的vars: 设置 persistable = True
+
+```
+
+### 工具包PALM
+
+为了鼓励代码复用，减少models下的重复代码，对NLP场景，我们开发了一个工具箱，PALM: **PA**ddle **L**anguage **M**odule，特性如下：
+
+- PALM是一个安装包，用户通过pip install之后，就可以随时随地使用PALM，不需要带着源代码到处跑。
+
+- PALM提供了简易的多格式配置文件管理（同时支持command-line，json和yaml），并支持通过command-line修改json和yaml的预配置。
+
+- PALM提供了高级的input数据管理，用户可以通过定义一个dict来自动build fluid.layers.data，并可以通过 .name 轻松调用input slot，并可以一步定义reader，简化学习成本
+
+- PALM提供了NLP方向的股价网络代码，如BERT，transformer-encoder，等，用户只需要import palm.nets即可快速使用。
+
+
+## 合入规则
+
+### 代码提交
+
+请遵守 [paddle官方代码提交规则](http://paddlepaddle.org/documentation/docs/zh/1.4/advanced_usage/development/contribute_to_paddle/index_cn.html)提交代码。
+
+
+## 升级维护
+
+（1） 官方库进入CE，部分核心模型进入CI单测。
+
+（2） 原则上，Paddle只维护官方库，对于非官方库（如一些基于paddle的paper work），由具体业务方负责。
+
+（3） 框架如有重大更新（包括reader，executor，save/load等），建议先在官方模型下回归一下效果，对比最终效果diff，效率diff，易用性（缩减的代码行数）等内容，用于指导发布和上线。
+
 
 
