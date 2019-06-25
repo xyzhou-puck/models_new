@@ -341,7 +341,6 @@ def save_param(args, exe, program, dirname):
     return True
 
 # 训练函数入口，args默认使用argparse
-
 def do_train(args):
 
     train_prog = fluid.default_main_program()
@@ -354,36 +353,16 @@ def do_train(args):
         with fluid.unique_name.guard():
 
             # define input and reader
+            # 对于比较简单的任务可以直接写 input_data = fluid.layers.data()
+            # 对于比较复杂的任务，建议自行封装到一个类里，或者使用PALM input_fiedl进行处理。
 
             input_slots = [{
                 "name": "src_ids",
                 "shape": (-1, args.max_seq_len, 1),
                 "dtype": "int64"
-            }, {
-                "name": "pos_ids",
-                "shape": (-1, args.max_seq_len, 1),
-                "dtype": "int64"
-            }, {
-                "name": "sent_ids",
-                "shape": (-1, args.max_seq_len, 1),
-                "dtype": "int64"
-            }, {
-                "name": "input_mask",
-                "shape": (-1, args.max_seq_len, 1),
-                "dtype": "float32"
-            }, {
-                "name": "input_span_mask",
-                "shape": (-1, args.max_seq_len),
-                "dtype": "float32"
-            }, {
-                "name": "start_positions",
-                "shape": (-1, 1),
-                "dtype": "int64"
-            }, {
-                "name": "end_positions",
-                "shape": (-1, 1),
-                "dtype": "int64"
-            }, {
+            }, 
+            ...
+            {
                 "name": "is_null_answer",
                 "shape": (-1, 1),
                 "dtype": "int64"
@@ -393,67 +372,30 @@ def do_train(args):
             input_field.build(build_pyreader=True)
 
             # define the network
-
+            # 调用 XXX_net.py 声明网络定义，如果有多个网络，可以通过args进行分支判断
+            
             loss = create_net(
                 is_training=True, model_input=input_field, args=args)
-
+            
+            # 如果使用了GC，则需要保留persistable的定义（for 1.5），1.6后移除
             loss.persistable = True
 
             # define the optimizer
 
-            if args.use_cuda:
-                dev_count = fluid.core.get_cuda_device_count()
-            else:
-                dev_count = int(
-                    os.environ.get('CPU_NUM', multiprocessing.cpu_count()))
-
-            # as we need to get the max training steps for warmup training,
-            # we define the data processer in advance
-            # usually, we can declare data processor later, outsides the program_gurad scope
-
-            processor = DataProcessor(
-                vocab_path=args.vocab_path,
-                do_lower_case=args.do_lower_case,
-                max_seq_length=args.max_seq_len,
-                in_tokens=args.in_tokens,
-                doc_stride=args.doc_stride,
-                do_stride=args.do_stride,
-                max_query_length=args.max_query_len)
-
-            ## define the data generator
-            batch_generator = processor.data_generator(
-                data_path=args.training_file,
-                batch_size=args.batch_size,
-                phase="train",
-                shuffle=True,
-                dev_count=dev_count,
-                epoch=args.epoch)
-
-            num_train_examples = processor.get_num_examples(phase='train')
-            max_train_steps = args.epoch * num_train_examples // dev_count // args.batch_size
-            warmup_steps = int(max_train_steps * args.warmup_proportion)
-
-            print(max_train_steps, warmup_steps, num_train_examples)
-
             optimizor = optimization(
-                loss=loss,
-                warmup_steps=warmup_steps,
-                num_train_steps=max_train_steps,
-                learning_rate=args.learning_rate,
-                train_program=train_prog,
-                startup_prog=startup_prog,
-                weight_decay=args.weight_decay,
-                scheduler=args.lr_scheduler,
-                use_fp16=args.use_fp16,
-                loss_scaling=args.loss_scaling)
+                loss=loss)
 
     # prepare training
 
     ## decorate the pyreader with batch_generator
+    ## 定义和装配reader，reader统一采用PyReader（注意并非py_reader）
     input_field.reader.decorate_batch_generator(batch_generator)
 
     ## define the executor and program for training
-
+    
+    # 根据args.use_cuda定义模型的place
+    # 后续如果框架支持自动适配place则不需加入
+    
     if args.use_cuda:
         place = fluid.CUDAPlace(0)
     else:
@@ -474,6 +416,9 @@ def do_train(args):
     if args.init_from_pretrain_model:
         init_from_pretrain_model(args, exe, train_prog)
 
+    # 统一通过 compile_program + with_data_parallel 开启GPU多卡和CPU多核训练
+    # 注意这里要区分一下CPU和GPU运行环境的配置，建议对每个场景都尽量能达到最优配置，防止用户吐槽
+    
     build_strategy = fluid.compiler.BuildStrategy()
     build_strategy.enable_inplace = True
 
@@ -522,6 +467,9 @@ def do_train(args):
 
 
 if __name__ == "__main__":
+    # 参数控制可以根据需求使用argparse，yaml或者json
+    # 对NLP任务推荐使用PALM下定义的configure，可以统一argparse，yaml或者json格式的配置文件。
+    
     args = PDConfig(yaml_file="./data/config/squad1.yaml")
     args.build()
     args.Print()
@@ -529,25 +477,147 @@ if __name__ == "__main__":
     do_train(args)
     
 ```
-
-
-#### predict.py书写示例
-
-#### eval.py书写示例
+predict.py 和 eval.py 的定义可以参考train.py进行。
 
 #### main.py书写示例
 
-### 命名规范
-1. 文件和文件夹命名
+```python
+
+# Copyright (c) 2019 PaddlePaddle Authors. All Rights Reserved
+
+#
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+
+# you may not use this file except in compliance with the License.
+
+# You may obtain a copy of the License at
+
+#
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+#
+
+# Unless required by applicable law or agreed to in writing, software
+
+# distributed under the License is distributed on an "AS IS" BASIS,
+
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+# See the License for the specific language governing permissions and
+
+# limitations under the License.
+
+#encoding=utf8
+import os
+import sys
+import numpy as np
+import paddle
+import paddle.fluid as fluid
+
+#include palm for easier nlp coding
+from palm.toolkit.configure import PDConfig
+
+from train import do_train
+from predict import do_predict
+from eval import do_eval
+from inference_model import do_save_inference_model
+
+if __name__ == "__main__":
+
+    # 可选，载入预定义参数
+    args = PDConfig(yaml_file="./data/config/squad1.yaml")
+    args.build()
+    
+    # 打印参数，帮助用户提早发现模型中的问题
+    args.Print()
+
+    if args.do_train:
+        do_train(args)
+
+    if args.do_predict:
+        do_predict(args)
+
+    if args.do_eval:
+        do_eval(args)
+
+    if args.do_save_inference_model:
+        do_save_inference_model(args)
+
+
+```
+
+#### 整体需要注意的问题
+
+- reader部分统一采用PyReader(http://paddlepaddle.org/documentation/docs/zh/1.4/api_cn/io_cn.html#pyreader)
+  iterable=True or False还在验证中，目前不做具体要求。
+
+- executor统一采用exectuor + compile_program，不再使用parallel_executor
+
+- 参数控制使用双轨制：argparse + json （或者argparse + yaml），根据具体场景而定
+
+- 对于非常复杂的模型（输入数据很多（fluid.layers.data），如BERT），需要书写模型的人具体定义一个数据类，用于管理数据
+
+- create_model需要统一区分is_training，以便于处理训练和预测网络结构不同的情况
+
+- program_guard 和 unique_name.guard()是否需要显示写明，视具体任务而定，对于简单任务，可以不写，对于复杂任务推荐写明。 
+
+- 模型IO部分，区分以下场景：
+  - checkpoint，用于恢复训练，使用API save/load_persistable，save和load的时候需要手动指定文件后缀".pdckpt"
+  - 参数文件，用于进行预测或者保存预训练模型，使用API save/load_params，save的时候需要手动指定文件后缀".pdparams"，对load不做要求（为了适配过去的预训练模型）
+  - inference_model，用户
+
+
+### 命名规范和使用规范
+1. 文件和文件夹命名中，尽量使用下划线\'_ \'代表空格，不要使用'-'
+2. 模型定义过程中，需要有一个统一的变量（parameter）命名管理手段，如尽量手动声明每个变量的名字并支持名称可变，禁止将名称定义为一个常数（如"embedding"），避免用户在复用代码阶段出现各种诡异的问题。
+3. 重要文件，变量的名称定义过程中需要能够通过名字表明含义，禁止使用含混不清的名称，如net.py, aaa.py等。
+4. 在代码中定义path时，需要使用os.path.join完成，禁止使用string加的方式，导致模型对windows环境缺乏支持。
+5. 其他代码规范需要遵守paddlepaddle python规范。
 
 ### README
 
+README文件需至少包含的内容如图所示，可以根据场景进行扩展：
+
+![avatar](./appendix/readme.png)
+
+1. 安装：
+部分模型使用了第三方库或者高级库，需要给出安装方法
+2. 快速开始：
+需要包含，数据准备，训练，测试，评估等主要内容的操作方法（在GPU单机单卡，单机多卡，CPU多核）
+3. 自定义数据：
+需要介绍模型用到的数据格式，以及如何使用自定义数据进行训练，预测，评估，部署等内容。
+4. 模型原理（可选）：
+简要对模型原理进行介绍，帮助用户快速了解模型结构。
+5. 模型部署：
+需要介绍如何对训练好的模型进行部署。
 
 ### 多环境支持
 
+- 对于安装paddlepaddle-gpu的用户：
+  
+    训练命令：在run.sh中，给出GPU单卡，GPU多卡，CPU多核的训练命令样例，供用户选择
+    
+    预测/评估命令：在run.sh中，给出GPU单卡，CPU单核的预测命令样例，供用户选择
+
+- 对于安装paddlepaddle的用户（CPU版本）：
+
+  如果用户安装了CPU版本的paddle，但是执行了使用GPU的命令，则通过框架报错的方式提示用户使用CPU命令进行训练和预测
+
+- 硬件和操作系统环境： 请参考：http://agroup.baidu.com/paddlepaddle/view/office/1860862
 
 ### 注释和Licenses
+对于代码中重要的部分，包括但不仅限于：
+- Reader的定义。
+- Data Processer 和 Data Generator的定义。
+- 整个模型定义，包括input，运算过程，loss等内容。
+- init，save，load，等io部分
+- 运行中间的关键状态，如print loss，save model等。
 
+对于整个模型代码，都需要在文件头内加入licenses，readme中加入licenses标识。
+
+需要加入注释介绍功能，帮助用户快速熟悉代码结构。
 
 ## 建议规范
 
