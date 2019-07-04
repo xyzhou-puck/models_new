@@ -521,6 +521,8 @@ if __name__ == "__main__":
 
 #### 整体需要注意的问题
 
+- 如果模型依赖paddlepaddle未涵盖的依赖（如 pandas），则需要在README中显示提示用户安装对应依赖。
+
 - reader部分统一采用PyReader(http://paddlepaddle.org/documentation/docs/zh/1.4/api_cn/io_cn.html#pyreader)
   iterable=True or False还在验证中，目前不做具体要求。
 
@@ -528,7 +530,7 @@ if __name__ == "__main__":
 
 - 参数控制使用双轨制：argparse + json （或者argparse + yaml），根据具体场景而定
 
-- 对于非常复杂的模型（输入数据很多（fluid.layers.data），如BERT），需要书写模型的人具体定义一个数据类，用于管理数据
+- 对于非常复杂的模型（输入数据很多（fluid.layers.data），如BERT），需要书写模型的人具体定义一个数据类，用于管理数据（可以参考PALM的实现方式）
 
 - create_model需要统一区分is_training，以便于处理训练和预测网络结构不同的情况
 
@@ -541,7 +543,7 @@ if __name__ == "__main__":
 
 - 显存优化，统一废弃 fluid.memory_optimize，统一改为开启GC，参见[**显存优化**](#显存优化)
 
-- 随机种子，需要尽量固定program，numpy等含有随机因素模块的随机种子，保证模型可以正常复现。
+- 随机控制，需要尽量固定program，numpy等含有随机因素模块的随机种子，保证模型可以正常复现。
 
 
 ### 命名规范和使用规范
@@ -578,7 +580,11 @@ README文件需至少包含的内容如图所示，可以根据场景进行扩�
 
 - 对于安装paddlepaddle的用户（CPU版本）：
 
-  如果用户安装了CPU版本的paddle，但是执行了使用GPU的命令，则通过框架报错的方式提示用户使用CPU命令进行训练和预测
+  如果用户安装了CPU版本的paddle，但是执行了使用GPU的命令，则通过框架报错的方式提示用户使用CPU命令进行训练和预测。
+  
+  同时，模型的开发人员也要通过fluid.is_compiled_with_cuda()接口，判断安装paddle的类型（GPU or CPU），如果用户使用CPU版本paddle但是指定了CUDAPlace，模型需要给出warning，引导用户修改配置或者安装GPU版本paddle，并自动退出。（参考：https://github.com/PaddlePaddle/models/blob/develop/PaddleNLP/models/model_check.py）
+  
+  如果模型库提供的模型不支持CPU环境运行或者在CPU环境运行会有致命缺陷（如速度慢到无法接受），则需要在README显著位置提示用户安装paddle-GPU。
 
 - 硬件和操作系统环境： 请参考：http://agroup.baidu.com/paddlepaddle/view/office/1860862
 
