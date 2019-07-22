@@ -28,7 +28,6 @@
 
   - [**显存优化**](#显存优化)
   
-  - [**工具包PALM**](#工具包PALM)
   
   
 - [**合入规则**](#合入规则)
@@ -764,19 +763,6 @@ b. 图文结合展开介绍训练阶段、预测阶段做的特色优化。
 对需要fetch的vars: 设置 persistable = True
 
 ```
-
-### 工具包PALM
-
-为了鼓励代码复用，减少models下的重复代码，对NLP场景，我们开发了一个工具箱，PALM: **PA**ddle **L**anguage **M**odule，特性如下：
-
-- PALM是一个安装包，用户通过pip install之后，就可以随时随地使用PALM，不需要带着源代码到处跑。
-
-- PALM提供了简易的多格式配置文件管理（同时支持command-line，json和yaml），并支持通过command-line修改json和yaml的预配置。
-
-- PALM提供了高级的input数据管理，用户可以通过定义一个dict来自动build fluid.layers.data，并可以通过 .name 轻松调用input slot，并可以一步定义reader，简化学习成本
-
-- PALM提供了NLP方向的股价网络代码，如BERT，transformer-encoder，等，用户只需要import palm.nets即可快速使用。
-
 
 ## 合入规则
 
