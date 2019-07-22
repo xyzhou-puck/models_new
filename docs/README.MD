@@ -1,7 +1,7 @@
 # Paddle官方模型库开发规范
 
-[[外链图片转存失败(img-h0PlhCnt-1563788879145)(https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat)]](https://github.com/PaddlePaddle/models)
-[[外链图片转存失败(img-hGLoGUVD-1563788879155)(https://img.shields.io/badge/license-Apache%202-blue.svg)]](LICENSE)
+[![Documentation Status](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat)](https://github.com/PaddlePaddle/models)
+[![License](https://img.shields.io/badge/license-Apache%202-blue.svg)](LICENSE)
 
 ## 目录
 - [**整体目标和原则**](#整体目标和原则)
@@ -60,20 +60,21 @@
 
 #### 一级目录，按照大方向进行细分，如PaddleNLP，PaddleCV等：
 
-[外链图片转存失败(img-ZUDPQZhl-1563788879163)(./appendix/dir-1.png)]
+![avatar](./appendix/dir-1.png)
 
 #### 二级目录，按照具体场景进行拆分，如在PaddleNLP下，有neural_machine_translation，reading_comprehension等：
 
-[外链图片转存失败(img-pZY1IDN9-1563788879164)(./appendix/dir-2.png)]
+![avatar](./appendix/dir-2.png)
 1. NLP之前已有项目名称的文件名和路径保持不变。如similarity_net，sentiment_classification等。
 2. 共享网络、预处理路径及其名称保持不变，即models，preprocess等。后续有共享网络项目也按此方式。
+
 #### 三级目录，按照具体任务进行拆分，如在reading_comprehension下，有squad任务，mrqa任务等：
 
-[外链图片转存失败(img-QoXZpS0q-1563788879165)(./appendix/dir-3.png)]
+![avatar](./appendix/dir-3.png)
 
 #### 叶子目录，具体到某个具体的任务，如SQuAD，则建议包涵以下内容：
 
-[外链图片转存失败(img-1ydHN3FX-1563788879165)(./appendix/dir-4.png)]
+![avatar](./appendix/dir-4.png)
 
 - **data**：存储所有跟数据相关的内容，如configure，dict，input，output，saved_models，inferenece_models等。
 - **squad**：该文件夹命名可以根据具体任务进行命名，保存该任务下一些特定的代码，如reader.py，batching.py，tokenizer.py等。
@@ -87,7 +88,7 @@
 - **run.sh**：示例脚本，需要给出不同环境下（GPU单卡多卡，CPU多核），如何进行训练，预测，评估，保存部署环境等功能。
 
 注：
-1. NLP叶子目录结构不变，如已经统一的run_classifier.py不必拆分成eval.py/train.py/predict.py，只在op层面、函数层面改进即可。
+1. NLP叶子目录结构不变，比如已经统一的run_classifier.py不必拆分成eval.py/train.py/predict.py，只在op层面、函数层面改进即可。
 
 ### 功能实现
 
@@ -791,3 +792,6 @@ b. 图文结合展开介绍训练阶段、预测阶段做的特色优化。
 （2） 原则上，Paddle只维护官方库，对于非官方库（如一些基于paddle的paper work），由具体业务方负责。
 
 （3） 框架如有重大更新（包括reader，executor，save/load等），建议先在官方模型下回归一下效果，对比最终效果diff，效率diff，易用性（缩减的代码行数）等内容，用于指导发布和上线。
+
+
+
