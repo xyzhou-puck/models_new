@@ -61,17 +61,20 @@
 
 ![avatar](./appendix/dir-1.png)
 
-#### 二级目录，按照具体场景进行拆分，如在PaddleNLP下，有neural_machine_translation，reading_comprehension等：
+#### 二级目录
 
 ![avatar](./appendix/dir-2.png)
-1. NLP之前已有项目名称的文件名和路径保持不变。如similarity_net，sentiment_classification等。
-2. 共享网络、预处理路径及其名称保持不变，即models，preprocess等。后续有共享网络项目也按此方式。
+
+1. 原则上按照具体场景进行拆分，如在PaddleNLP下，有neural_machine_translation，reading_comprehension等。
+2. 共享网络、预处理、Research部分都作为二级目录，如在PaddleNLP下，有models，preprocess，Research等。
 
 #### 三级目录，按照具体任务进行拆分，如在reading_comprehension下，有squad任务，mrqa任务等：
 
 ![avatar](./appendix/dir-3.png)
 
-#### 叶子目录，具体到某个具体的任务，如SQuAD，则建议包涵以下内容：
+#### 叶子目录
+
+- 具体到某个具体的任务，如SQuAD，则建议包涵以下内容：
 
 ![avatar](./appendix/dir-4.png)
 
@@ -85,9 +88,7 @@
 - **predict.py**：执行预测功能的脚本，需要可以单独运行。
 - **train.py**：执行训练功能的脚本，需要可以单独运行。
 - **run.sh**：示例脚本，需要给出不同环境下（GPU单卡多卡，CPU多核），如何进行训练，预测，评估，保存部署环境等功能。
-
-注：
-1. NLP叶子目录结构不变，比如已经统一的run_classifier.py不必拆分成eval.py/train.py/predict.py，只在op层面、函数层面改进即可。
+- **run_XXX.py**:也可以将eval.py/train.py/predict.py合并成一个文件, 不同的训练策略用不用的XXX区分。
 
 ### 功能实现
 
@@ -97,6 +98,21 @@
 3. **评估**：要求同预测。
 4. **保存部署环境**：可以保存可以部署环境，支持模型部署。
 5. **使用自定义数据**：要求官方模型可以灵活支持/适配用户自定义数据，可以通过在readme中加入数据格式描部分和**如何使用自定义数据**章节解决。
+
+#### 共享网络
+
+1. 对于不同的应用场景采用相同网络的情况，可以用共享网络的方案来实现。
+2. 以PaddleNLP为例，可以将文本分类、匹配、序列标注等典型任务的常用网络封装到models路径中，在应用中直接引用相关模块即可。
+3. 采用直接使用sys.path.append(‘../’)，然后使用package全路径名，避免相对引用，例如引用nets.py，就变成from models.classify import nets
+4. 不同网络作为nets.py中的一个函数进行封装。
+
+#### 预处理
+
+1. 对于NLP类应用需要诸如分词一样的文本预处理工作。这些模块统一封装在preprocess中。
+2. 以PaddleNLP的分词为例，可以采用如下方式:
+```shell
+python ../preprocess/tokenizer/tokenizer.py --test_data_dir ./test.txt.utf8 --batch_size 1 > test.txt.utf8.seg
+```
 
 ### 书写示例
 
@@ -141,6 +157,7 @@ def create_net(
         def __inint__(self):
           self.image = fluid.layers.data(shape = [-1, 8, 8, 1], dtype = "int64", name = "image")
       
+
       you can define your own one in the code or you can use PALM for easy input data management.
       
     """
@@ -522,6 +539,466 @@ if __name__ == "__main__":
 
 
 ```
+
+- 下面以sentiment_classification说明如何使用共享网络。
+
+#### run_classifier.py书写实例
+```python
+"""
+Sentiment Classification Task
+"""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import os
+import time
+import argparse
+import numpy as np
+import multiprocessing
+import sys
+sys.path.append("../models/classification/")
+
+from nets import bow_net
+from nets import lstm_net
+from nets import cnn_net
+from nets import bilstm_net
+from nets import gru_net
+
+import paddle
+import paddle.fluid as fluid
+
+import reader
+from config import SentaConfig
+from utils import ArgumentGroup, print_arguments
+from utils import init_checkpoint
+
+# yapf: disable
+parser = argparse.ArgumentParser(__doc__)
+model_g = ArgumentGroup(parser, "model", "model configuration and paths.")
+model_g.add_arg("senta_config_path", str, None, "Path to the json file for senta model config.")
+model_g.add_arg("init_checkpoint", str, None, "Init checkpoint to resume training from.")
+model_g.add_arg("checkpoints", str, "checkpoints", "Path to save checkpoints")
+
+train_g = ArgumentGroup(parser, "training", "training options.")
+train_g.add_arg("epoch", int, 10, "Number of epoches for training.")
+train_g.add_arg("save_steps", int, 10000, "The steps interval to save checkpoints.")
+train_g.add_arg("validation_steps", int, 1000, "The steps interval to evaluate model performance.")
+train_g.add_arg("lr", float, 0.002, "The Learning rate value for training.")
+
+log_g = ArgumentGroup(parser, "logging", "logging related")
+log_g.add_arg("skip_steps", int, 10, "The steps interval to print loss.")
+log_g.add_arg("verbose", bool, False, "Whether to output verbose log")
+
+data_g = ArgumentGroup(parser, "data", "Data paths, vocab paths and data processing options")
+data_g.add_arg("data_dir", str, None, "Path to training data.")
+data_g.add_arg("vocab_path", str, None, "Vocabulary path.")
+data_g.add_arg("batch_size", int, 256, "Total examples' number in batch for training.")
+data_g.add_arg("random_seed", int, 0, "Random seed.")
+
+run_type_g = ArgumentGroup(parser, "run_type", "running type options.")
+run_type_g.add_arg("use_cuda", bool, True, "If set, use GPU for training.")
+run_type_g.add_arg("task_name", str, None,
+    "The name of task to perform sentiment classification.")
+run_type_g.add_arg("do_train", bool, True, "Whether to perform training.")
+run_type_g.add_arg("do_val", bool, True, "Whether to perform evaluation.")
+run_type_g.add_arg("do_infer", bool, True, "Whether to perform inference.")
+
+args = parser.parse_args()
+# yapf: enable.
+
+def create_model(args,
+                 pyreader_name,
+                 senta_config,
+                 num_labels,
+                 is_inference=False):
+
+    """
+    Create Model for sentiment classification
+    """
+
+    pyreader = fluid.layers.py_reader(
+        capacity=16,
+        shapes=([-1, 1], [-1, 1]),
+        dtypes=('int64', 'int64'),
+        lod_levels=(1, 0),
+        name=pyreader_name,
+        use_double_buffer=False)
+
+    if senta_config['model_type'] == "bilstm_net":
+        network = bilstm_net
+    elif senta_config['model_type'] == "bow_net":
+        network = bow_net
+    elif senta_config['model_type'] == "cnn_net":
+        network = cnn_net
+    elif senta_config['model_type'] == "lstm_net":
+        network = lstm_net
+    elif senta_config['model_type'] == "gru_net":
+        network = gru_net
+    else:
+        raise ValueError("Unknown network type!")
+
+    if is_inference:
+        data, label = fluid.layers.read_file(pyreader)
+        probs = network(data, None, senta_config["vocab_size"], is_infer=is_inference)
+        print("create inference model...")
+        return pyreader, probs
+
+    data, label = fluid.layers.read_file(pyreader)
+    ce_loss, probs = network(data, label, senta_config["vocab_size"], is_infer=is_inference)
+    loss = fluid.layers.mean(x=ce_loss)
+    num_seqs = fluid.layers.create_tensor(dtype='int64')
+    accuracy = fluid.layers.accuracy(input=probs, label=label, total=num_seqs)
+    return pyreader, loss, accuracy, num_seqs
+
+
+
+def evaluate(exe, test_program, test_pyreader, fetch_list, eval_phase):
+    """
+    Evaluation Function
+    """
+    test_pyreader.start()
+    total_cost, total_acc, total_num_seqs = [], [], []
+    time_begin = time.time()
+    while True:
+        try:
+            np_loss, np_acc, np_num_seqs = exe.run(program=test_program,
+                                                   fetch_list=fetch_list,
+                                                   return_numpy=False)
+            np_loss = np.array(np_loss)
+            np_acc = np.array(np_acc)
+            np_num_seqs = np.array(np_num_seqs)
+            total_cost.extend(np_loss * np_num_seqs)
+            total_acc.extend(np_acc * np_num_seqs)
+            total_num_seqs.extend(np_num_seqs)
+        except fluid.core.EOFException:
+            test_pyreader.reset()
+            break
+    time_end = time.time()
+    print("[%s evaluation] ave loss: %f, ave acc: %f, elapsed time: %f s" %
+        (eval_phase, np.sum(total_cost) / np.sum(total_num_seqs),
+        np.sum(total_acc) / np.sum(total_num_seqs), time_end - time_begin))
+
+
+def inference(exe, test_program, test_pyreader, fetch_list, infer_phrase):
+    """
+    Inference Function
+    """
+    test_pyreader.start()
+    time_begin = time.time()
+    while True:
+        try:
+            np_props = exe.run(program=test_program, fetch_list=fetch_list,
+                                return_numpy=True)
+            for probs in np_props[0]:
+                print("%d\t%f\t%f" % (np.argmax(probs), probs[0], probs[1]))
+        except fluid.core.EOFException:
+            test_pyreader.reset()
+            break
+    time_end = time.time()
+    print("[%s] elapsed time: %f s" % (infer_phrase, time_end - time_begin))
+
+
+def main(args):
+    """
+    Main Function
+    """
+    senta_config = SentaConfig(args.senta_config_path)
+
+    if args.use_cuda:
+        place = fluid.CUDAPlace(int(os.getenv('FLAGS_selected_gpus', '0')))
+        dev_count = fluid.core.get_cuda_device_count()
+    else:
+        place = fluid.CPUPlace()
+        dev_count = 1
+    exe = fluid.Executor(place)
+
+    task_name = args.task_name.lower()
+    processor = reader.SentaProcessor(data_dir=args.data_dir,
+                                      vocab_path=args.vocab_path,
+                                      random_seed=args.random_seed)
+    num_labels = len(processor.get_labels())
+
+
+    if not (args.do_train or args.do_val or args.do_infer):
+        raise ValueError("For args `do_train`, `do_val` and `do_infer`, at "
+                         "least one of them must be True.")
+
+    startup_prog = fluid.Program()
+    if args.random_seed is not None:
+        startup_prog.random_seed = args.random_seed
+
+    if args.do_train:
+        train_data_generator = processor.data_generator(
+            batch_size=args.batch_size,
+            phase='train',
+            epoch=args.epoch,
+            shuffle=True)
+
+        num_train_examples = processor.get_num_examples(phase="train")
+
+        max_train_steps = args.epoch * num_train_examples // args.batch_size // dev_count
+
+        print("Device count: %d" % dev_count)
+        print("Num train examples: %d" % num_train_examples)
+        print("Max train steps: %d" % max_train_steps)
+
+        train_program = fluid.Program()
+
+        with fluid.program_guard(train_program, startup_prog):
+            with fluid.unique_name.guard():
+                train_pyreader, loss, accuracy, num_seqs = create_model(
+                    args,
+                    pyreader_name='train_reader',
+                    senta_config=senta_config,
+                    num_labels=num_labels,
+                    is_inference=False)
+
+                sgd_optimizer = fluid.optimizer.Adagrad(learning_rate=args.lr)
+                sgd_optimizer.minimize(loss)
+
+        if args.verbose:
+            lower_mem, upper_mem, unit = fluid.contrib.memory_usage(
+                program=train_program, batch_size=args.batch_size)
+            print("Theoretical memory usage in training: %.3f - %.3f %s" %
+                (lower_mem, upper_mem, unit))
+
+    if args.do_val:
+        test_prog = fluid.Program()
+        with fluid.program_guard(test_prog, startup_prog):
+            with fluid.unique_name.guard():
+                test_pyreader, loss, accuracy, num_seqs = create_model(
+                    args,
+                    pyreader_name='test_reader',
+                    senta_config=senta_config,
+                    num_labels=num_labels,
+                    is_inference=False)
+
+        test_prog = test_prog.clone(for_test=True)
+
+    if args.do_infer:
+        infer_prog = fluid.Program()
+        with fluid.program_guard(infer_prog, startup_prog):
+            with fluid.unique_name.guard():
+                infer_pyreader, prop = create_model(
+                    args,
+                    pyreader_name='infer_reader',
+                    senta_config=senta_config,
+                    num_labels=num_labels,
+                    is_inference=True)
+        infer_prog = infer_prog.clone(for_test=True)
+
+    exe.run(startup_prog)
+
+    if args.do_train:
+        if args.init_checkpoint:
+            init_checkpoint(
+                exe,
+                args.init_checkpoint,
+                main_program=startup_prog)
+
+    elif args.do_val or args.do_infer:
+        if not args.init_checkpoint:
+            raise ValueError("args 'init_checkpoint' should be set if"
+                             "only doing validation or testing!")
+        init_checkpoint(
+            exe,
+            args.init_checkpoint,
+            main_program=startup_prog)
+
+    if args.do_train:
+        train_exe = exe
+        train_pyreader.decorate_paddle_reader(train_data_generator)
+    else:
+        train_exe = None
+    if args.do_val or args.do_infer:
+        test_exe = exe
+
+    if args.do_train:
+        train_pyreader.start()
+        steps = 0
+        total_cost, total_acc, total_num_seqs = [], [], []
+        time_begin = time.time()
+        while True:
+            try:
+                steps += 1
+                #print("steps...")
+                if steps % args.skip_steps == 0:
+                    fetch_list = [loss.name, accuracy.name, num_seqs.name]
+                else:
+                    fetch_list = []
+
+                outputs = train_exe.run(program=train_program, fetch_list=fetch_list, return_numpy=False)
+                #print("finished one step")
+                if steps % args.skip_steps == 0:
+                    np_loss, np_acc, np_num_seqs = outputs
+                    np_loss = np.array(np_loss)
+                    np_acc = np.array(np_acc)
+                    np_num_seqs = np.array(np_num_seqs)
+                    total_cost.extend(np_loss * np_num_seqs)
+                    total_acc.extend(np_acc * np_num_seqs)
+                    total_num_seqs.extend(np_num_seqs)
+
+                    if args.verbose:
+                        verbose = "train pyreader queue size: %d, " % train_pyreader.queue.size()
+                        print(verbose)
+
+                    time_end = time.time()
+                    used_time = time_end - time_begin
+                    print("step: %d, ave loss: %f, "
+                        "ave acc: %f, speed: %f steps/s" %
+                        (steps, np.sum(total_cost) / np.sum(total_num_seqs),
+                        np.sum(total_acc) / np.sum(total_num_seqs),
+                        args.skip_steps / used_time))
+                    total_cost, total_acc, total_num_seqs = [], [], []
+                    time_begin = time.time()
+
+                if steps % args.save_steps == 0:
+                    save_path = os.path.join(args.checkpoints,
+                                         "step_" + str(steps))
+                    fluid.io.save_persistables(exe, save_path, train_program)
+
+                if steps % args.validation_steps == 0:
+                    # evaluate dev set
+                    if args.do_val:
+                        print("do evalatation")
+                        test_pyreader.decorate_paddle_reader(
+                            processor.data_generator(
+                                batch_size=args.batch_size,
+                                phase='dev',
+                                epoch=1,
+                                shuffle=False))
+
+                        evaluate(exe, test_prog, test_pyreader,
+                                [loss.name, accuracy.name, num_seqs.name],
+                                "dev")
+
+            except fluid.core.EOFException:
+                save_path = os.path.join(args.checkpoints, "step_" + str(steps))
+                fluid.io.save_persistables(exe, save_path, train_program)
+                train_pyreader.reset()
+                break
+
+    # final eval on dev set
+    if args.do_val:
+        test_pyreader.decorate_paddle_reader(
+            processor.data_generator(
+                batch_size=args.batch_size, phase='dev', epoch=1,
+                shuffle=False))
+        print("Final validation result:")
+        evaluate(exe, test_prog, test_pyreader,
+            [loss.name, accuracy.name, num_seqs.name], "dev")
+
+        test_pyreader.decorate_paddle_reader(
+            processor.data_generator(
+                batch_size=args.batch_size, phase='infer', epoch=1,
+                shuffle=False))
+        evaluate(exe, test_prog, test_pyreader,
+            [loss.name, accuracy.name, num_seqs.name], "infer")
+
+
+    # final eval on test set
+    if args.do_infer:
+        infer_pyreader.decorate_paddle_reader(
+            processor.data_generator(
+                batch_size=args.batch_size,
+                phase='infer',
+                epoch=1,
+                shuffle=False))
+        print("Final test result:")
+        inference(exe, infer_prog, infer_pyreader,
+            [prop.name], "infer")
+
+if __name__ == "__main__":
+    print_arguments(args)
+    main(args)
+
+```
+
+#### nets.py书写实例
+```python
+"""
+This module provide nets for text classification
+"""
+
+import paddle.fluid as fluid
+
+def bow_net(data,
+            label,
+            dict_dim,
+            emb_dim=128,
+            hid_dim=128,
+            hid_dim2=96,
+            class_dim=2,
+            is_infer=False):
+    """
+    Bow net
+    """
+    # embedding layer
+    emb = fluid.layers.embedding(input=data, size=[dict_dim, emb_dim])
+    # bow layer
+    bow = fluid.layers.sequence_pool(input=emb, pool_type='sum')
+    bow_tanh = fluid.layers.tanh(bow)
+    # full connect layer
+    fc_1 = fluid.layers.fc(input=bow_tanh, size=hid_dim, act="tanh")
+    fc_2 = fluid.layers.fc(input=fc_1, size=hid_dim2, act="tanh")
+    # softmax layer
+    prediction = fluid.layers.fc(input=[fc_2], size=class_dim, act="softmax")
+    if is_infer:
+        return prediction
+    cost = fluid.layers.cross_entropy(input=prediction, label=label)
+    avg_cost = fluid.layers.mean(x=cost)
+    acc = fluid.layers.accuracy(input=prediction, label=label)
+
+    return avg_cost, prediction
+
+
+def bilstm_net(data,
+               label,
+               dict_dim,
+               emb_dim=128,
+               hid_dim=128,
+               hid_dim2=96,
+               class_dim=2,
+               emb_lr=30.0,
+               is_infer=False):
+    """
+    Bi-Lstm net
+    """
+    # embedding layer
+    emb = fluid.layers.embedding(
+        input=data,
+        size=[dict_dim, emb_dim],
+        param_attr=fluid.ParamAttr(learning_rate=emb_lr))
+
+    fc0 = fluid.layers.fc(input=emb, size=hid_dim * 4)
+    rfc0 = fluid.layers.fc(input=emb, size=hid_dim * 4)
+    lstm_h, c = fluid.layers.dynamic_lstm(
+        input=fc0, size=hid_dim * 4, is_reverse=False)
+    rlstm_h, c = fluid.layers.dynamic_lstm(
+        input=rfc0, size=hid_dim * 4, is_reverse=True)
+    # extract last layer
+    lstm_last = fluid.layers.sequence_last_step(input=lstm_h)
+    rlstm_last = fluid.layers.sequence_last_step(input=rlstm_h)
+    lstm_last_tanh = fluid.layers.tanh(lstm_last)
+    rlstm_last_tanh = fluid.layers.tanh(rlstm_last)
+
+    # concat layer
+    lstm_concat = fluid.layers.concat(input=[lstm_last, rlstm_last], axis=1)
+    # full connect layer
+    fc1 = fluid.layers.fc(input=lstm_concat, size=hid_dim2, act='tanh')
+    # softmax layer
+    prediction = fluid.layers.fc(input=fc1, size=class_dim, act='softmax')
+    if is_infer:
+        return prediction
+    cost = fluid.layers.cross_entropy(input=prediction, label=label)
+    avg_cost = fluid.layers.mean(x=cost)
+    acc = fluid.layers.accuracy(input=prediction, label=label)
+    return avg_cost, prediction
+ 
+```
+
 
 #### 整体需要注意的问题
 
