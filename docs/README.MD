@@ -1013,7 +1013,7 @@ def bilstm_net(data,
 
 - 对于非常复杂的模型（输入数据很多（fluid.layers.data），如BERT），需要书写模型的人具体定义一个数据类，用于管理数据（可以参考PALM的实现方式）
 
-- create_model需要统一区分is_training，以便于处理训练和预测网络结构不同的情况
+- create_model需要统一区分is_training/is_prediction，以便于处理训练和预测网络结构不同的情况，建议采用枚举值而非布尔值以增加代码可读性。
 
 - program_guard 和 unique_name.guard()是否需要显示写明，视具体任务而定，对于简单任务，可以不写，对于复杂任务推荐写明。 
 
