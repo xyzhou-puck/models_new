@@ -68,10 +68,6 @@
 1. 原则上按照具体场景进行拆分，如在PaddleNLP下，有neural_machine_translation，reading_comprehension等。
 2. 共享网络、预处理、Research部分都作为二级目录，如在PaddleNLP下，有models，preprocess，Research等。
 
-#### 三级目录，按照具体任务进行拆分，如在reading_comprehension下，有squad任务，mrqa任务等：
-
-![avatar](./appendix/dir-3.png)
-
 #### 叶子目录
 
 - 具体到某个具体的任务，如SQuAD，则建议包涵以下内容：
