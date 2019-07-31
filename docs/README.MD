@@ -1022,6 +1022,10 @@ def bilstm_net(data,
   - 参数文件，用于进行预测或者保存预训练模型，使用API save/load_params，save的时候需要手动指定文件后缀".pdparams"，对load不做要求（为了适配过去的预训练模型）
   - inference_model，用于保存部署模型，使用API save/load_inference_model，需要手动指定文件后缀为".pdparams"和".pdmodel"。
 
+- 需要提供inference_model文件。
+
+- 新项目优先采用tensor数据结构，旧版的lod_tensor不再维护，并且现有模型中lod_tensor会逐渐升级为tensor。
+
 - 显存优化，统一废弃 fluid.memory_optimize，统一改为开启GC，参见[**显存优化**](#显存优化)
 
 - 随机控制，需要尽量固定program，numpy等含有随机因素模块的随机种子，保证模型可以正常复现。
@@ -1209,7 +1213,17 @@ b. 图文结合展开介绍训练阶段、预测阶段做的特色优化。
   
   如果模型库提供的模型不支持CPU环境运行或者在CPU环境运行会有致命缺陷（如速度慢到无法接受），则需要在README显著位置提示用户安装paddle-GPU。
 
-- 硬件和操作系统环境： 请参考：http://agroup.baidu.com/paddlepaddle/view/office/1860862
+- 硬件和操作系统环境：
+  
+  1. Python2 and python3
+
+  2. Linux (Centos) and windows
+
+  3. CUDA 9 and CUDNN 7
+
+  4. GPU and CPU
+  
+  请参考：http://agroup.baidu.com/paddlepaddle/view/office/1860862
 
 ### 注释和Licenses
 对于代码中重要的部分，包括但不仅限于：
@@ -1219,7 +1233,7 @@ b. 图文结合展开介绍训练阶段、预测阶段做的特色优化。
 - init，save，load，等io部分
 - 运行中间的关键状态，如print loss，save model等。
 
-对于整个模型代码，都需要在文件头内加入licenses，readme中加入licenses标识。
+**对于整个模型代码，都需要在文件头内加入licenses，readme中加入licenses标识。代码中有引用其他开源代码必须要说明。**
 
 需要加入注释介绍功能，帮助用户快速熟悉代码结构。
 
