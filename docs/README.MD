@@ -1016,7 +1016,7 @@ def bilstm_net(data,
 - 模型IO部分，区分以下场景：
   - checkpoint，用于恢复训练，使用API save/load_persistable，save和load的时候需要手动指定文件后缀".pdckpt"
   - 参数文件，用于进行预测或者保存预训练模型，使用API save/load_params，save的时候需要手动指定文件后缀".pdparams"，对load不做要求（为了适配过去的预训练模型）
-  - inference_model，用于保存部署模型，使用API save/load_inference_model，需要手动指定文件后缀为".pdparams"和".pdmodel"。
+  - inference_model，用于保存部署模型，使用API save/load_inference_model，需要手动指定文件后缀为".pdparams"和".pdmodel" 。inference_model 请务必提供，并用load_inference_model测试可行，方便用户部署。
 
 - 需要提供inference_model文件。
 
@@ -1024,7 +1024,13 @@ def bilstm_net(data,
 
 - 显存优化，统一废弃 fluid.memory_optimize，统一改为开启GC，参见[**显存优化**](#显存优化)
 
-- 随机控制，需要尽量固定program，numpy等含有随机因素模块的随机种子，保证模型可以正常复现。
+- 随机控制，需要尽量固定program，numpy等含有随机因素模块的随机种子，保证模型可以正常复现。示例代码如下：
+
+```python
+  fluid.default_main_program().random_seed = 102
+  fluid.default_startup_program().random_seed = 102
+  your_cutomized_program.random_seed = 102
+```
 
 - 超参数：模型内部超参数禁止写死，尽量都可以通过配置文件进行配置。
 
@@ -1220,6 +1226,14 @@ b. 图文结合展开介绍训练阶段、预测阶段做的特色优化。
   4. GPU and CPU
   
   请参考：http://agroup.baidu.com/paddlepaddle/view/office/1860862
+
+- 对于windows的支持
+
+  1. 生成路径名尽量用sys.path.join，
+
+  2. 脚本命令需要考虑能否在window执行（如果不行则尽量在readme内给出window）
+
+  3. 文件编码方式也需要考虑windows的情况（Paddle的QA会验收，验收后会有结果，可以再update）
 
 ### 注释和Licenses
 对于代码中重要的部分，包括但不仅限于：
